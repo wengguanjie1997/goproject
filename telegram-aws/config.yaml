@@ -1,0 +1,5 @@
+aws:
+  awsAccessKeyId: "xxxxxx" # aws的accessKeyId,在aws控制台生成
+  awsSecretAccessKey: "xxxxx" # aws的SecretAccessKey,在aws控制台生成
+tg: 
+  token: "xxxxx" # TG机器人的token
