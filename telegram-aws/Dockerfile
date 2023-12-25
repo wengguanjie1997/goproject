@@ -2,7 +2,7 @@ FROM golang:1.21.4-alpine as build
 ENV GO111MODULE=on \
     CGO_ENABLED=0 \
     GOOS=linux \
-    GOARCH=arm64
+    GOARCH=amd64
 
 WORKDIR /build
 COPY . .
