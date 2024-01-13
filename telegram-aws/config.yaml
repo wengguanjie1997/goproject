@@ -3,3 +3,5 @@ aws:
   awsSecretAccessKey: "xxxxx" # aws的SecretAccessKey,在aws控制台生成
 tg: 
   token: "xxxxx" # TG机器人的token
+hf:
+  apiKey: "xxxx" # 和风天气的apiKey

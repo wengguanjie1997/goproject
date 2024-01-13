@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"goproject/conf"
+	"goproject/utils"
 	"log"
-	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,30 +16,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lightsail"
 	"github.com/aws/aws-sdk-go-v2/service/lightsail/types"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"gopkg.in/yaml.v3"
 )
-
-type Config struct {
-	AWS AwsInfo `yaml:"aws"`
-	TG  TgInfo  `yaml:"tg"`
-}
-type AwsInfo struct {
-	AwsAccessKeyId     string `yaml:"awsAccessKeyId"`
-	AwsSecretAccessKey string `yaml:"awsSecretAccessKey"`
-}
-type TgInfo struct {
-	Token string `yaml:"token"`
-}
 
 // NetworkUsageResponse 包含网络传输额度信息的结构
 type NetworkUsageResponse struct {
-	LigthsailName string  `json:"vpsName"`
+	LightsailName string  `json:"vpsName"`
 	NetworkIn     float64 `json:"networkIn"`
 	NetworkOut    float64 `json:"networkOut"`
 	NetworkTotal  string  `json:"networkTotal"`
 }
 
-// 获取本月的第一天
+// GetCurrentMonthFirstDayZeroTime 获取本月的第一天
 func GetCurrentMonthFirstDayZeroTime() *time.Time {
 
 	currentTime := time.Now()
@@ -47,17 +36,7 @@ func GetCurrentMonthFirstDayZeroTime() *time.Time {
 
 }
 
-// func getCurrentMonthLastDayLastTime() string {
-// 	// 获取当前时间
-// 	currentTime := time.Now()
-
-// 	// 获取本月的最后一天
-// 	lastDayOfMonth := time.Date(currentTime.Year(), currentTime.Month()+1, 0, 0, 0, 0, 0, currentTime.Location())
-
-// 	return fmt.Sprintf(lastDayOfMonth.Format("2006-01-02"))
-// }
-
-// 获取实例列表
+// ListInstance 获取实例列表
 func ListInstance(client *lightsail.Client) []string {
 	var InstanceNames []string
 	instances, err := client.GetInstances(context.TODO(), &lightsail.GetInstancesInput{})
@@ -70,7 +49,7 @@ func ListInstance(client *lightsail.Client) []string {
 	return InstanceNames
 }
 
-// 获取实例的Metric数据
+// GetInstanceDataUsage 获取实例的Metric数据
 func GetInstanceDataUsage(client *lightsail.Client, vpsName string, metricType types.InstanceMetricName) float64 {
 	input := &lightsail.GetInstanceMetricDataInput{
 		EndTime:      aws.Time(time.Now()),
@@ -97,7 +76,7 @@ func GetInstanceDataUsage(client *lightsail.Client, vpsName string, metricType t
 
 }
 
-// 获取实例的网络流量使用情况
+// GetLightsailNetworkUsage 获取实例的网络流量使用情况
 func GetLightsailNetworkUsage(awsAccessKeyId, awsSecretAccessKey string) NetworkUsageResponse {
 
 	cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(awsAccessKeyId, awsSecretAccessKey, "")), config.WithRegion("ap-southeast-1"))
@@ -115,38 +94,24 @@ func GetLightsailNetworkUsage(awsAccessKeyId, awsSecretAccessKey string) Network
 
 	// 构建响应结构
 	response := NetworkUsageResponse{
-		LigthsailName: instanceNameList[0],
+		LightsailName: instanceNameList[0],
 		NetworkIn:     networkIn,
 		NetworkOut:    networkOut,
 		NetworkTotal:  networkTotal,
 	}
-
 	return response
-}
-
-func GetConfig() (conf Config, err error) {
-	config := &Config{}
-	data, err := os.ReadFile("./config.yaml")
-	if err != nil {
-		fmt.Println("Error open the file: ", err)
-	}
-	err = yaml.Unmarshal(data, &config)
-	if err != nil {
-		return *config, err
-	}
-	return *config, nil
 }
 
 func main() {
 
-	conf, err := GetConfig()
+	cfg, err := conf.GetConfig()
 	if err != nil {
 		fmt.Println("err get config: ", err)
 	}
 
-	bot, err := tgbotapi.NewBotAPI(conf.TG.Token)
+	bot, err := tgbotapi.NewBotAPI(cfg.TG.Token)
 	if err != nil {
-		panic(err)
+		log.Panic(err)
 	}
 	bot.Debug = true
 
@@ -157,14 +122,30 @@ func main() {
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
 		wg.Add(1)
-		go handleUpdate(&wg, bot, updates, conf)
+		go handleUpdate(&wg, bot, updates, cfg)
 	}
 	wg.Wait()
 
 }
+func parseCommand(message string) (string, string) {
+	parts := strings.SplitN(message[1:], " ", 2) // 移除斜杠，并分割成命令和参数部分
+	command := parts[0]
+	var args string
+	if len(parts) > 1 {
+		args = parts[1]
+	}
+	return command, args
+}
+func handleDefaultCommand(args string) string {
+	if args != "" {
+		reply := "I don't know that command with args"
+		return reply
+	}
+	return ""
+}
 
 // 处理TG的信息返回
-func handleUpdate(wg *sync.WaitGroup, bot *tgbotapi.BotAPI, updates tgbotapi.UpdatesChannel, conf Config) {
+func handleUpdate(wg *sync.WaitGroup, bot *tgbotapi.BotAPI, updates tgbotapi.UpdatesChannel, conf conf.Config) {
 
 	defer wg.Done()
 
@@ -178,19 +159,48 @@ func handleUpdate(wg *sync.WaitGroup, bot *tgbotapi.BotAPI, updates tgbotapi.Upd
 		}
 
 		chatID := update.Message.Chat.ID
-
 		replyMsg := tgbotapi.NewMessage(chatID, "")
-		switch update.Message.Command() {
+		command, args := parseCommand(update.Message.Text)
+		switch command {
 		case "help":
-			replyMsg.Text = "I understand /sayhi and /usage."
+			reply := handleDefaultCommand(args)
+			menu := fmt.Sprintf("/help 帮助信息\n/sayhi 欢迎\n/usage 查询vps流量\n/weather 城市名称 查询城市天气")
+			if reply != "" {
+				replyMsg.Text = reply
+			} else {
+				replyMsg.Text = menu
+			}
 		case "sayhi":
-			replyMsg.Text = "Hi :) I am your father!"
+			reply := handleDefaultCommand(args)
+			if reply != "" {
+				replyMsg.Text = reply
+			} else {
+				replyMsg.Text = "Hi :) I am your father!"
+			}
+
+		case "weather":
+			if args == "" {
+				replyMsg.Text = "vaild command,you should input cityName,example: /weather shenzhen"
+			} else {
+				weatherInfo, err := utils.GetCityWeather(args, conf.HF.ApiKey)
+				if err != nil {
+					replyMsg.Text = fmt.Sprintf("error: %v", err)
+				}
+				weatherInfoText := fmt.Sprintf("城市：%s\n温度：%s\n日期：%s\n", weatherInfo.Name, weatherInfo.Temperature, weatherInfo.Date)
+				replyMsg.Text = weatherInfoText
+			}
+
 		case "usage":
-			netWorkInfo := GetLightsailNetworkUsage(conf.AWS.AwsAccessKeyId, conf.AWS.AwsSecretAccessKey)
-			log.Printf("API [GetLightsailNetworkUsage] 被调用")
-			netWorkInfoText := fmt.Sprintf(" Name: %s\n NetworkIn: %.1f \n NetworkOut: %.1f \n Total: %s",
-				netWorkInfo.LigthsailName, netWorkInfo.NetworkIn, netWorkInfo.NetworkOut, netWorkInfo.NetworkTotal)
-			replyMsg.Text = netWorkInfoText
+			reply := handleDefaultCommand(args)
+			if reply != "" {
+				replyMsg.Text = reply
+			} else {
+				netWorkInfo := GetLightsailNetworkUsage(conf.AWS.AwsAccessKeyId, conf.AWS.AwsSecretAccessKey)
+				log.Printf("API: [GetLightsailNetworkUsage] 被调用")
+				netWorkInfoText := fmt.Sprintf(" Name: %s\n NetworkIn: %.1f \n NetworkOut: %.1f \n Total: %s",
+					netWorkInfo.LightsailName, netWorkInfo.NetworkIn, netWorkInfo.NetworkOut, netWorkInfo.NetworkTotal)
+				replyMsg.Text = netWorkInfoText
+			}
 		default:
 			replyMsg.Text = "I don't know that command"
 		}
